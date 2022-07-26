@@ -1,150 +1,741 @@
 ---
-title: "Vitousek Analysis Guide"
-author: "Sabrina McNew & Conor Taff"
-date: "Last Updated: `r format(Sys.time(), '%B %d %Y at %H:%M')`"
+title: "Carotenoid deposition simulation for common yellowthroat feather coloration."
+author: 
+ - Conor C. Taff
+header-includes:
+  - \usepackage[font={footnotesize}, labelfont={bf}]{caption}
+fontsize: 12pt
 output: 
   html_document:
-    toc: true
-    toc_float: true
-    theme: cerulean
-    code_folding: hide
+      code_folding: hide
+      toc: TRUE
+      toc_float: TRUE
+      theme: cerulean
+  bookdown::word_document2:
+      number_sections: FALSE
+      toc: FALSE
+      extra_dependcies: ["flafter"]
+  bookdown::pdf_document2:
+      number_sections: FALSE
+      toc: FALSE
+      extra_dependencies: ["float"]
+bibliography: references.bib
+csl: animal-behaviour.csl
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library(knitr)
-library(dplyr)
-library(ggplot2)
-library(here)
-library(sjPlot)
+```{r setup, include=FALSE, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.pos = "!H")
+pacman::p_load(ggplot2, here, tidyverse, viridis, gridExtra, pavo, GGally, kableExtra, MASS)
 ```
 
-## Basic Project Workflow
+# Purpose
 
-There is no single right way to keep an organized and reproducible project directory. This is just one set of recommendations of a strategy that works for us and is at least a good starting place. 
+The goal here is to demonstrate how different patterns of variation in i) the shape of structural white spectra, ii) the UV shift of the white spectra, iii) amount of carotenoid deposition, and iv) the overall reflectance level generate different patterns of covariance in downstream metrics of coloration. A simulation is set up allowing me to vary each of these characteristics separately or together to demonstrate the effects.
 
-1. Make a clear plan for what will constitute a distinct 'project' and what data are needed for that project. It's easy to jump right into data analysis, but it really saves time down the road to have all the raw data organized first. Which data tables will be needed and which columns will each table need to have? Adding more data later is of course possible and sometimes unavoidable, but it can make it hard to stay organized! 
+# Simulation
 
-2. Put together those data sets. For tree swallow data, this will likely involve compiling some data from different places and from the database. In an ideal world, this data would be as 'raw' as possible, but our 'raw' form data is often already summarized to some extent (e.g., feeding rates from rfids rather than all the raw rfid files). Save these raw data files as tab delimited text or comma separated value files. **Make sure your data are tidy!!** If you aren't sure what that means you can find lots of guides to tidy data online.
+The simulation here is simple and involves four stages that represent the four possible sources of variation in ultimate color measurements. These four transformations are employed sequentially in the order presented to a set number of randomly drawn individuals. The amount of variation in each process can be set to examine the consequences of variation in each process alone or any combination of processes.
 
-3. Go to your GitHub account and make a new repository. Give it a descriptive name that is not too long. You can also use this repository as a template to start your new project by either forking it or by clicking the 'template' button that will start a new repository with it's own name but keep all the structure and files associated with this repository, then you can edit as needed for your new project. If you use this as a template, several of the steps listed below will already be done for you.
+## 1. Shape of spectral curve
 
-4. Go to your repository. Click the green 'code' button and copy the link to clone the https repository. [Note that the first time you are setting GitHub & RStudio on your computer there may be some extra steps. See links to getting started below.]
+To generate the structural shape of the white feather spectra, I start with the average white reflectance curve in Shawkey & Hill [@shawkey2005 figure 1A 'before treatment' and 'after treatment' can be chosen]. I extracted these curves using WebPlotDigitizer and interpolated points for every 1 nm wavelength by fitting a smoothed regression. This results in the 'typical' white color that is used as the default when structural color does not vary (figure \@ref(fig:white-shawkey)).
 
-5. Open RStudio, choose to start a new project. Choose 'version control' and 'Git'. Put in the url you copied from your repository. Choose a folder for your project to live in on your local machine and give the project directory a name (using the repo name works fine!). 
+```{r white-shawkey, message = FALSE, warning = FALSE, fig.height = 3, fig.width = 4, fig.cap = "Structural white curves taken from Shawkey and Hill 2005 Figure 1A before and after feather bleaching treatments."}
+# load shawkey figure data
+    shaw <- read.delim(here::here("1_raw_data", "shawkey_2005_fig1.txt"))
+    shaw_a <- subset(shaw, shaw$type == "after")
+    shaw_b <- subset(shaw, shaw$type == "before")
+    
+# Fit loess smooth and interpolate value at each 1 nm
+    r <- data.frame(wavelength = seq(300, 700, 1))
+    sa_lo <- loess(reflectance ~ wavelength, data = shaw_a, span = 0.1, surface = "direct")
+    sa_pred <- data.frame(wavelength = r$wavelength, reflectance = predict(sa_lo, newdata = r))
+    
+    sb_lo <- loess(reflectance ~ wavelength, data = shaw_b, span = 0.2, surface = "direct")
+    sb_pred <- data.frame(wavelength = r$wavelength, reflectance = predict(sb_lo, newdata = r))   
+    
+    s_pred <- data.frame(group = rep(c("Before", "After"), each = nrow(r)),
+                         wavelength = rep(r$wavelength, 2),
+                         reflectance = c(sb_pred$reflectance, sa_pred$reflectance))
 
-6. Now the project is on your machine and you can start making changes before pusing them back up to GitHub! Before starting analysis, I'd recommend making the following folder structure as a general rule (of course different projects might have different requirements). In this template project, all of these folders have been made already. 
-
-* **0_manuscript**: Store word/text documents when you start writing the manuscript. 
-* **1_raw_data**: Store your starting raw data. Never modify this folder contents in code.
-* **2_modified_data**: Store new data objects created by your code if needed.
-* **3_r_scripts**: Store R scripts and R Markdown code
-* **4_output_figures**: Store any figure outputs that you want to save as individual files.
-* **5_other_outputs**: Store things like tables or more complicated outputs. 
-* **9_supporting_files**: Store older files (e.g., an excel file used to make your starting data).
-* **README.md**: Created by GitHub. Text file created by GitHub. Good place to use as a 'lab notebook'.
-* **Project**: The R project. All your code will use relative path names to the folders above. 
-
-7. Open the project and make a new R script and a new markdown document. Save them into the '3_r_scripts'
-directory. Give them short, meaningful names. If you will have multiple scripts that need to be run in order, starting the file names with numbers will keep them all in order. For all of your files, think hard about using a consistent, logical naming scheme. Breaking up your code into different shorter scripts (e.g. cleaning/preprocessing, modeling, complicated plots etc.) can be helpful if you find yourself getting lost in your code. 
-
-8. Start your coding and analysis! As you create or read objects, store them into the appropriate folders above. For more complicated analysis you might have subfolders within some of the above or additional folders not listed here.
-
-9. Using the 'Git' panel in RStudio. You can commit your changes and push them back up to GitHub (with a note about what you changed). It's also good practice to 'Pull' your project down from GitHub each time you start a new session to make sure you have the up to date version (this is most important if you are collaborating with other people who might have made changes between your sessions, if you forget in your own session it's usually no big deal). You can commit your changes as often as you like. Maybe each time you finish a session working in R, or each time you are about to delete or modify a different section. Each time you commit will be a point that you can return to using version control on Git if you need to go back to that point later.
-
-10. As a general rule, we often write out code first in an organized and well annotated R script, and then migrate the right chunks of that code into a Markdown dowcument that puts together explanation, code, figures, and interpretation into a nice output format. There are a bunch of suggestions for organizing the code itself in the R script included here. 
-
-11. The goal for following this workflow is all of the parts that go into a project (paper) are stored together in a single folder (repository) that is complete and sufficient to reproduce everything. This should make it a lot easier to upload data and code when a paper is accepted and to share contents with other people.
-
-## Creating a Markdown File
-
-The big benefit of Markdown as opposed to just using R scripts is that it is much easier to intersperse text, code, and output in a way that is readable. That makes it great for summarizing your project in a way that is good for sharing with collaborators (or your future self). The code does run slower than through a script though and if you are writing long scripts it can be a bit more of a pain to organize the R scripts into chunks for markdown. For that reason it's often easiest to have both or to work first in an r script with notes and relevant sections saved and summarized in Markdown. You can still organize the code in a similar way (loading packages and data in the first chunks, etc) as suggested in the R script template in this repository. 
-
-### Markdown Styles
-
-You can customize the output of Markdown in a lot of different ways using the header at the top and commands for each code chunk (html or pdf, table of contents, colors, etc). The settings above give a nice html template with code folding (visible but only on a click) and a floating table of contents, but there are lots of guides showing how to change these things. You can even include citations and use reference managers to ultimately export into word. Because you can embed code within paragraphs, it would be possible to create an entire reproducible *manuscript* in Markdown that would automatically update as you change numbers in tables etc (though that might be a goal for down the road!).
-
-Here is how you embed a new figure created in Markdown. I'm installing the Palmer Penguins package to plot with. This package has been suggested as a good alternative to the `iris` dataset that is often used in R tutorials because of RA Fisher's association with that dataset and with horribly racist eugenics...plus penguins are cooler than flowers.
-
-```{r cars, warning = FALSE, message = FALSE}
-# Create a simple plot in markdown
-  #install.packages("palmerpenguins")
-  library(palmerpenguins)
-  penguins <- palmerpenguins::penguins
-  ggplot(penguins, aes( x = bill_length_mm, y = bill_depth_mm)) +
-    geom_point(aes (color = species)) + 
-    scale_color_manual(values = c("darkorange", "darkorchid", "cyan4")) + theme_classic()
-```
-
-You can of course do a huge amount of customization of the plotting appearance and labels, but that is the subject for a different tutorial.
-
-### Saved Figures in Markdown
-
-You can also include figures or tables generated in a script in your Markdown summary file by referencing the saved file in your project directory like this (assuming the png/jpg/tiff is saved in the same directory as your markdown script):
-
-![](hero_figure.png)\
-
-That figure was made in the example '1_main_script.R' that goes along with this repository. This could be useful if you run some analyses that take a long time in your R script and want to include just the output figure or table in your markdown summary. You can also display figures from a code chunk. With most of these things in R there are many different ways to do the same things and if you figure out a technique that works well go ahead and use it!
-
-### Saved Tables in Markdown
-
-You can also produce nice tables in Markdown. There are various different ways to do this, but one example given here is to save your table using the `tab_model` function from `sjPlot` and then just load the table directly into markdown. This method works really well for linear models (but doesn't work if you want to output your markdown file as a pdf). You could also do the table construction directly in markdown if that makes more sense for your project.
-
-```{r}
-m <- readRDS(here::here("5_other_outputs/hero_table.rds"))
-m
+# Plot the lines    
+    ggplot(data = s_pred, mapping = aes(x = wavelength, y = reflectance, color = group)) +
+      geom_smooth(se = FALSE, span = 0.1) + 
+      scale_color_manual(values = c("orange", "slateblue")) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      theme(legend.position = c(0.8, 0.2)) +
+      theme(legend.title = element_blank()) +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)")
+    
 ```
 
 
-### Coding Style
+To generate individuals that differ in their underlying structural shape, I multiplied this entire spectra by a percentage chosen from a random normal distribution with mean of 100% and SD of 15%. Multiplying by a percentage has the effect of both raising or lowering the overall curve and also of changing the overall percentage of reflectance that is represented in different wavelengths. The different spectral shapes generated by this sampling process can bee seen in Figure \@ref(fig:white-variation).
 
-Pick a consistent coding and annotation style and stick with it!! Try to be disciplined. It will make it much easier for you and collaborators to read your code. Think about things like snake_case or ~~CamelCase~~ (edit by Sabrina: 
-snake_case is Style Guide Approved; edit by Conor: I *used* to use CamelCase and `.` a lot as a separator in names, but I agree snake_case with underscores is easier to read and I always avoid `.` now too, but the most important thing is being consistent, when you switch back and forth between capitals and lowercase it can really slow you down trying to remember your object and column names), indentations and spaces, object names, etc. See the link below to the tidyverse style guide.
+```{r white-variation, fig.pos = "!H", message = FALSE, warning = FALSE, fig.height = 3.5, fig.width = 8, fig.cap = "Sampled spectral shapes starting from the base curves from Shawkey and Hill 2005 and multiplying by a random normal sample of percentages with mean of 100% and SD of 15%. Panel A starts with the base curve for 'after bleaching' and panel B starts with the base curve for 'before bleaching'."}
+  # multiply by percentages
+    pop_p <- rnorm(25, 1, 0.15)
+    pop_r <- as.data.frame(matrix(ncol = length(pop_p), nrow = nrow(s_pred)))
+    for(i in 1:length(pop_p)){
+      pop_r[, i] <- sb_pred$reflectance * rep(pop_p[i], nrow(sb_pred))
+    }
+    pop_r$wavelength <- s_pred$wavelength
+    pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")
+  
+  # Plot the lines    
+    p1 <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+      geom_smooth(se = FALSE, span = 0.1) + 
+      scale_color_viridis(discrete = TRUE) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      guides(color = "none") +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)") +
+      ggtitle("Before") +
+      annotate(geom = "text", x = -Inf, y = Inf, hjust = -.5, vjust = 1.5, label = "B", size = 8)
+    
+  # multiply by percentages
+    pop_p <- rnorm(25, 1, 0.15)
+    pop_r <- as.data.frame(matrix(ncol = length(pop_p), nrow = nrow(s_pred)))
+    for(i in 1:length(pop_p)){
+      pop_r[, i] <- sa_pred$reflectance * rep(pop_p[i], nrow(sb_pred))
+    }
+    pop_r$wavelength <- s_pred$wavelength
+    pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")
+  
+  # Plot the lines    
+    p2 <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+      geom_smooth(se = FALSE, span = 0.1) + 
+      scale_color_viridis(discrete = TRUE) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      guides(color = "none") +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)") +
+      ggtitle("After") +
+      annotate(geom = "text", x = -Inf, y = Inf, hjust = -.5, vjust = 1.5, label = "A", size = 8)  
+    
+    ggpubr::ggarrange(p2, p1)
+```
 
-## Useful Resources
+### Amount of UV in spectral curve
 
-The internet is full of resources for learning about R and a lot are very specific. This is a very incomplete list of resources that we can add to for things we found particularly helpful in getting set up. These links are focused on how to get started and keep your projects organized and reproducible and not on using code or packages for specific purposes (since that is a huge topic!).
+I'm not sure this is really a distinct mechanism from the shape section above, but we also discussed the fact that the same curve could be shifted to have more UV reflectance. I've implemented this source of variation in the following way. First, for each wavelength across the spectra I calculate one minus the percentage of the maximum reflectance for that wavelength (so low reflectance areas in UV end up with high numbers). Second, I draw a number from a random normal distribution with mean of 0 (no distortion) and SD of 0.15. I multiply this fixed value by the vector calculated above and add it to the original spectra. This results in a shifted towards UV peak for positive draws and a shifted away from UV peak for negative draws (Figure \@ref(fig:uv-variation)).
 
-### Github & RStudio
+For now, in the the simulations below I am ignoring this mechanism for simplicity.
 
-https://happygitwithr.com/
+```{r uv-variation, message = FALSE, warning = FALSE, fig.height = 4, fig.width = 8.5, fig.cap = "Sampled spectral shapes with shifts indicating more or less relative UV while max reflectance stays the same. Panels show the process applied to the 'after' (A) or 'before' (B) spectra from Shawkey and Hill 2005."}
+# multiply by uv shift
+    pop_p <- rnorm(25, 0, 0.15)
+    pop_r <- as.data.frame(matrix(ncol = length(pop_p), nrow = nrow(s_pred)))
+    for(i in 1:length(pop_p)){
+      temp <- (1 - sb_pred$reflectance / rep(max(sb_pred$reflectance), nrow(sb_pred)))
+      draw <- rnorm(1, 0, 12)
+      new <- sb_pred$reflectance + rep(draw, nrow(sb_pred)) * temp
+      new <- pmax(new, 0)
+      pop_r[, i] <- new
+    }
+    pop_r$wavelength <- s_pred$wavelength
+    pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")
+    
+# Plot the lines    
+    p1 <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+      geom_smooth(se = FALSE, span = 0.05) + 
+      scale_color_viridis(discrete = TRUE) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      guides(color = "none") +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)") +
+      ggtitle("Before") +
+      annotate(geom = "text", x = -Inf, y = Inf, hjust = -.5, vjust = 1.5, label = "B", size = 8)
+    
+# multiply by uv shift
+    pop_p <- rnorm(25, 0, 0.15)
+    pop_r <- as.data.frame(matrix(ncol = length(pop_p), nrow = nrow(s_pred)))
+    for(i in 1:length(pop_p)){
+      temp <- (1 - sa_pred$reflectance / rep(max(sa_pred$reflectance), nrow(sa_pred)))
+      draw <- rnorm(1, 0, 12)
+      new <- sa_pred$reflectance + rep(draw, nrow(sa_pred)) * temp
+      new <- pmax(new, 0)
+      pop_r[, i] <- new
+    }
+    pop_r$wavelength <- s_pred$wavelength
+    pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")
+    
+# Plot the lines    
+    p2 <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+      geom_smooth(se = FALSE, span = 0.05) + 
+      scale_color_viridis(discrete = TRUE) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      guides(color = "none") +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)") +
+      ggtitle("After") +
+      annotate(geom = "text", x = -Inf, y = Inf, hjust = -.5, vjust = 1.5, label = "A", size = 8)    
+    
+      ggpubr::ggarrange(p2, p1)    
+```
 
-### R Markdown
+## 3. Overall level of reflectance
 
-https://rstudio.com/wp-content/uploads/2015/02/rmarkdown-cheatsheet.pdf
+Here the goal was to change the overall level of reflectance while maintaining the shape of the underlying spectral shape. To accomplish this, I added or subtracted a fixed percentage of reflectance to the entire curve. When generating between-individual differences in this component, I chose a fixed value to add or subtract from a random normal distribution with mean of 0 and SD of 15%. In some cases, this subtraction could lead to negative reflectance values, so after the transformation I set any reflectance values less than zero to zero. This can result in slightly different shapes to curves at the low end, but is necessary to create realistic curves. Clipping can be avoided by starting with a curve that has a higher initial reflectance or changing the random addition numbers (e.g., use a mean of 10 and SD of 10%). Holding everything else constant, this process results in a population of curves that look like Figure \@ref(fig:reflect-variation).
 
-### Project Oriented Workflow
+```{r reflect-variation, message = FALSE, warning = FALSE, fig.height = 4, fig.width = 8.5, fig.cap = "Sampled spectral shapes starting from the base curves from Shawkey and Hill 2005 and adding a random normal sample of percentages with mean of 0 and SD of 15%. Panel A starts with the base curve for 'after bleaching' and panel B starts with the base curve for 'before bleaching'."}
+  # add random amount
+    pop_p <- rnorm(25, 0, 15)
+    pop_r <- as.data.frame(matrix(ncol = length(pop_p), nrow = nrow(s_pred)))
+    for(i in 1:length(pop_p)){
+      pop_r[, i] <- sb_pred$reflectance + rep(pop_p[i], nrow(sb_pred))
+    }
+    pop_r$wavelength <- s_pred$wavelength
+    pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")
+  
+  # Plot the lines    
+    p1 <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+      geom_smooth(se = FALSE, span = 0.1) + 
+      scale_color_viridis(discrete = TRUE) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      guides(color = "none") +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)") +
+      ggtitle("Before") +
+      annotate(geom = "text", x = -Inf, y = Inf, hjust = -.5, vjust = 1.5, label = "B", size = 8)
+    
+  # add percentages
+    pop_p <- rnorm(25, 0, 15)
+    pop_r <- as.data.frame(matrix(ncol = length(pop_p), nrow = nrow(s_pred)))
+    for(i in 1:length(pop_p)){
+      pop_r[, i] <- sa_pred$reflectance + rep(pop_p[i], nrow(sb_pred))
+    }
+    pop_r$wavelength <- s_pred$wavelength
+    pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")
+  
+  # Plot the lines    
+    p2 <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+      geom_smooth(se = FALSE, span = 0.1) + 
+      scale_color_viridis(discrete = TRUE) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      guides(color = "none") +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)") +
+      ggtitle("After") +
+      annotate(geom = "text", x = -Inf, y = Inf, hjust = -.5, vjust = 1.5, label = "A", size = 8)  
+    
+    ggpubr::ggarrange(p2, p1)  
+```
 
-https://www.tidyverse.org/blog/2017/12/workflow-vs-script/
 
-### Coding Style and Annotation
+## 4. Amount of carotenoid deposition
 
-https://style.tidyverse.org/index.html
+Last, we can take the curves generated by the two processes above and then layer carotenoid deposition on top of them. In common yellowthroats, yellow color is generated solely by lutein. I found a plot of the absorption spectrum of lutein online (there are many published spectra) and digitized it using WebPlotDigitizer as described above so that I ended up with an absorption value for every wavelength from 300 to 700 nm (Figure \@ref(fig:lutein-only)).
 
-### Tidy Data and R For Data Science (R4DS)
+```{r lutein-only, message = FALSE, warning = FALSE, fig.height = 3, fig.width = 4, fig.cap = "Absorbance spectrum of lutein."}
+# Read in lutein data
+  # load lutein data that I copied from an absorbance spectra posted online
+    lut <- read.delim(here::here("1_raw_data", "lutein.txt"))
 
-> "Happy families are all alike; every unhappy family is unhappy in its own way." - Leo Tolstoy 
+  # In order to make it flat outside of range I'm adding more points that extend out at the beginning and end
+    lut_begin <- data.frame(molecule = "lutein",
+                            wavelength = seq(280, 310, 5),
+                            absorbance = 0.05209852)
+    lut_end <- data.frame(molecule = "lutein",
+                          wavelength = seq(565, 800, 5),
+                          absorbance = 0.008027346)
+    lut <- rbind(lut, lut_begin, lut_end)
+    
+# Fit loess smooth and interpolate value at each 1 nm
+    r <- data.frame(wavelength = seq(300, 700, 1))
+    lu_lo <- loess(absorbance ~ wavelength, data = lut, span = 0.05, surface = "direct")
+    lu_pred <- data.frame(wavelength = r$wavelength, absorbance = predict(lu_lo, newdata = r))
 
-> "Tidy datasets are all alike, but every messy dataset is messy in its own way." - Hadley Wickham
+# Plot the lines    
+    ggplot(data = lu_pred, mapping = aes(x = wavelength, y = absorbance)) +
+      #geom_smooth(se = FALSE, span = 0.04, color = "goldenrod", size = 1.5) + 
+      #geom_point(alpha = 0.5) +
+      geom_line(color = "goldenrod", size = 1.5) + 
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      theme(legend.position = c(0.8, 0.2)) +
+      theme(legend.title = element_blank()) +
+      xlab("Wavelength (nm)") +
+      ylab("Absorbance (%)")
+```
 
-The R4DS free book is a great resource for many of the issues discussed here, but definitely spend some time understanding the tidy data chapter. Keeping data tidy makes it very easy to move to longer or wider formats using `pivot_longer` or `pivot_wider` without having to resort to any kind of manual editing or copy pasting in excel. Ideally your analysis starts with a small number of tidy data frames and all subsequent steps are coded to proceed from those original data with no manual modifications or selections.
+The absorbance spectrum that I used was calibrated such that the maximum absorbance at 452 nm was ~96%. I generated samples of different amounts of lutein deposition by multiplying this lutein spectrum by number chosen from a random normal distribution with mean of 0.8 and SD of 0.1. Spectral curves with carotenoid absorption were then calculated by the formula: white - white * lutein absorption. When underlying white coloration and reflectance is held constant, this process resulted in a population of spectral shapes as shown in Figure \@ref(fig:lutein-variation). Note that there is no assumption here about the actual amount of carotenoid deposition represented by these curves; rather, it is designed to create realistic spectral shapes and variation without considering the detailed physical properties. As above, I clipped any negative reflectance values to 0.
 
-https://r4ds.had.co.nz/tidy-data.html
 
-### How to Name your Files
-The names of your files should be 
-1. Machine readable 
-2. Human readable 
-2. Sortable 
+```{r lutein-variation, message = FALSE, warning = FALSE, fig.height = 4, fig.width = 8.5, fig.cap = "Variation in lutein deposition added to the basic structure for 'after' (A) or before (B) white spectra."}
+# multiply by lutein
+    pop_p <- rnorm(25, 0.8, 0.1)
+    pop_r <- as.data.frame(matrix(ncol = length(pop_p), nrow = nrow(sb_pred)))
+    for(i in 1:length(pop_p)){
+      draw <- rnorm(1, 0.7, 0.15)
+      if(draw > 1){draw <- 1}
+      temp <- draw * lu_pred$absorbance
+      pop_r[, i] <- sb_pred$reflectance - (sb_pred$reflectance * temp)
+    }
+    pop_r$wavelength <- sb_pred$wavelength
+    pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")
+    
+# Plot the lines    
+    p1 <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+      #geom_smooth(se = FALSE, span = 0.05) + 
+      geom_line() + 
+      scale_color_viridis(discrete = TRUE) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      guides(color = "none") +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)") +
+      ggtitle("Before") +
+      annotate(geom = "text", x = -Inf, y = Inf, hjust = -.5, vjust = 1.5, label = "B", size = 8)
+    
+# multiply by lutein
+    pop_p <- rnorm(25, 0.8, 0.1)
+    pop_r <- as.data.frame(matrix(ncol = length(pop_p), nrow = nrow(sa_pred)))
+    for(i in 1:length(pop_p)){
+      draw <- rnorm(1, 0.7, 0.15)
+      if(draw > 1){draw <- 1}
+      temp <- draw * lu_pred$absorbance
+      pop_r[, i] <- sa_pred$reflectance - (sa_pred$reflectance * temp)
+    }
+    pop_r$wavelength <- sa_pred$wavelength
+    pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")
+    
+# Plot the lines    
+    p2 <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+      #geom_smooth(se = FALSE, span = 0.05) + 
+      geom_line() + 
+      scale_color_viridis(discrete = TRUE) +
+      theme_bw() + 
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+      guides(color = "none") +
+      xlab("Wavelength (nm)") +
+      ylab("Reflectance (%)") +
+      ggtitle("After") +
+      annotate(geom = "text", x = -Inf, y = Inf, hjust = -.5, vjust = 1.5, label = "A", size = 8)
+    
+      ggpubr::ggarrange(p2, p1)  
+```
 
-For more information please see: 
-https://speakerdeck.com/jennybc/how-to-name-files
+# 5. Measurement error
 
-## Ending your document
+This just raises or lowers the entire curve shape by a random amount after all the prior transformations are finished.
 
-I've started to try to always end my R Markdown summaries by printing the session info for your R environment. That way the versions of all of your packages and the list of any you have loaded will be preserved with the output. The goal is that with this info someone else should be able to take your entire directory of folders, configure their R session with the right packages (annoying but possible) and then reproduce everything exactly as you have it in your final version on their own computer without the need for any additional files and all using relative path names.
+# Calculating color metrics
 
-```{r}
-sessionInfo()
+The three step process described above can generate an arbitrary number of spectra that vary in any way desired (i.e., we can specify variation in any one, two, or all three of the contributing processes). After generating a sample of spectra as desired, I calculated a variety of downstream color metrics that summarize certain properties of the color spectra. For now I've calculated metrics exactly as we describe in Freeman-Gallant et al. ([-@gallant2010]). This includes total brightness, uv brightness, yellow brightness, uv saturation, yellow saturation, and Ccar. The final result is a table of coloration metrics for a population of a defined sample size and set sources of variation in overall color that can be used to ask how each metric covaries.
+
+# Function
+
+The description above describes how each step in the simulation works, but the entire set of steps is contained in a single function called `lutein_sim`. The function takes arguments for the sample size desired, which initial curve to start with, and the mean and standard deviation settings for each source of variation described above. The output includes i) the full spectra for each individual, ii) the summary table of color metrics, iii) a plot with the full spectra for each individual, and iv) a correlation plot of the key pair-wise color metrics. Each of these four outputs can be accessed from the list object returned by the function. The entire set of steps describe above is run in a single line of code. Because this is drawing from a random distribution, remember to set a seed if you want identical results to be produced each time. For now I just have the function running as a standalone script, but I can set it up to install via GitHub if we want. You'll need to have the following packages already installed in your R environment: `tidyverse`; `ggplot2`; `viridis`; `GGally`. Once those are installed, you can just run the single code block from the repository to load the function and then have access to the function to generate new variations.
+
+Note that I bumped up the overall reflectance a bit from the Shawkey figure just to stop it from clipping at 0 when adding variation. That should not change any correlation patterns.
+
+ADDITION 7/26. I've cleaned up the code a bit and added the ability to specify correlations between each of the mechanisms described above. By default correlations are set to 0 (same as previous version), but each can now be specified individually. Some of the argument names are changed for clarity. 
+
+
+```{r carotenoid_sim, warning = FALSE, message = FALSE}
+
+carotenoid_sim <- function(n = 50, shape1_mu = 1, shape1_sd = 0, 
+                       shape2_mu = 0, shape2_sd = 0,
+                       totalb_mu = 12, totalb_sd = 0,
+                       pigment_mu = 0.75, pigment_sd = 0,
+                       shape1_shape2_cor = 0, shape1_totalb_cor = 0, shape1_pigment_cor = 0,
+                       shape2_totalb_cor = 0, shape2_pigment_cor = 0, totalb_pigment_cor = 0,
+                       base_shape = "after", measure_error = 0){
+  
+  # Convert uv shift (shape 2) and total brightness sds to *100 since the percentages are on whole number scales
+    shape2_sd <- shape2_sd * 100
+    totalb_sd <- totalb_sd * 100
+  
+  # Build a variance covariance matrix based on the numbers listed above
+    sim_matrix <- matrix(nrow = 4, ncol = 4, data = c(
+      shape1_sd^2, shape1_shape2_cor*shape1_sd*shape2_sd, shape1_totalb_cor*shape1_sd*totalb_sd, shape1_pigment_cor*shape1_sd*pigment_sd, 
+      shape1_shape2_cor*shape1_sd*shape2_sd, shape2_sd^2, shape2_totalb_cor*shape2_sd*totalb_sd, shape2_pigment_cor*shape2_sd*pigment_sd,
+      shape1_totalb_cor*shape1_sd*totalb_sd, shape2_totalb_cor*shape2_sd*totalb_sd, totalb_sd^2, totalb_pigment_cor*totalb_sd*pigment_sd,
+      shape1_pigment_cor*shape1_sd*pigment_sd, shape2_pigment_cor*shape2_sd*pigment_sd, totalb_pigment_cor*totalb_sd*pigment_sd, pigment_sd^2
+    ))
+    
+  # Sample values for individuals from a multivariate normal distribution based on the var-cov matrix constructed above
+    individuals <- as.data.frame(mvrnorm(n = n, mu = c(shape1_mu, shape2_mu, totalb_mu, pigment_mu), Sigma = sim_matrix))
+    colnames(individuals) <- c("shape1", "shape2", "totalb", "pigment")
+    
+  # Pigment values above 1 result in negative reflectance. Clip these out. Changing mean/sd settings in call can prevent these from happening
+    individuals$pigment <- ifelse(individuals$pigment > 1, 1, individuals$pigment)
+  
+
+  
+  # Set up for using before or after spectra
+    if(base_shape == "after"){bs <- "after"}
+    if(base_shape == "before"){bs <- "before"}
+  
+  # Read in basic shape data. This requires the file to be present. Should really be hardcoded in.
+      # load shawkey figure data
+        shaw <- read.delim(here::here("1_raw_data", "shawkey_2005_fig1.txt"))
+        shaw <- subset(shaw, shaw$type == bs)
+        
+      # Fit and predict from loess smoothed line to get reflectance at each nm wavelength
+          r <- data.frame(wavelength = seq(300, 700, 1))
+          lo_fit <- loess(reflectance ~ wavelength, data = shaw, span = 0.1, surface = "direct")
+          lo_pred <- data.frame(wavelength = r$wavelength, reflectance = predict(lo_fit, newdata = r))
+          
+  # Read in lutein shape data. This also requires file and should be hardcoded in. I should add different pigments.
+        # load lutein data that I copied from an absorbance spectra posted online
+            lut <- read.delim(here::here("1_raw_data", "lutein.txt"))
+        
+        # In order to make it flat outside of range I'm adding more points that extend out at the beginning and end
+            lut_begin <- data.frame(molecule = "lutein",
+                                    wavelength = seq(280, 310, 5),
+                                    absorbance = 0.05209852)
+            lut_end <- data.frame(molecule = "lutein",
+                                  wavelength = seq(565, 800, 5),
+                                  absorbance = 0.008027346)
+            lut <- rbind(lut, lut_begin, lut_end)
+            
+        # Fit loess smooth and interpolate value at each 1 nm
+            lu_lo <- loess(absorbance ~ wavelength, data = lut, span = 0.05, surface = "direct")
+            lu_pred <- data.frame(wavelength = r$wavelength, absorbance = predict(lu_lo, newdata = r))
+  
+  # 1. Add in white variation
+        # multiply by percentages
+          pop_r <- as.data.frame(matrix(ncol = nrow(individuals), nrow = nrow(lo_pred)))
+          for(i in 1:n){
+            pop_r[, i] <- lo_pred$reflectance * rep(individuals[i, 1], nrow(lo_pred))
+          }
+          
+  # 2. Add in uv shift variation
+       # multiply by uv shift
+          for(i in 1:n){
+            temp <- (1 - pop_r[, i] / rep(max(pop_r[, i]), nrow(lo_pred)))
+            draw <- individuals[i, 2]
+            new <- pop_r[, i] + rep(draw, nrow(lo_pred)) * temp
+            pop_r[, i] <- new
+          }
+          
+  # 3. Add in overall reflectance variation
+      pop_p2 <- individuals$totalb    
+      for(i in 1:n){
+        pop_r[, i] <- pop_r[, i] + rep(pop_p2[i], nrow(lo_pred))
+      }          
+      
+  # 4. Add in lutein deposition variation
+      # multiply by lutein
+          for(i in 1:n){
+            draw <- individuals$pigment[i]
+            temp <- draw * lu_pred$absorbance
+            pop_r[, i] <- pop_r[, i] - (pop_r[, i] * temp)
+          }
+  
+  # Add measurement error
+        measure_error <- measure_error*100 # convert to percentage scale
+        errors <- rnorm(n, mean = 0, sd = measure_error)
+        for(i in 1:n){
+          pop_r[, i] <- pop_r[, i] + rep(errors[i], nrow(pop_r))
+        }
+        pop_r[pop_r < 0] <- 0
+      
+  # Add back in a column with wavelength information
+        pop_r$wavelength <- lo_pred$wavelength
+        pop_r[pop_r < 0] <- 0
+        pop_r2 <- pivot_longer(pop_r, cols = starts_with("V"), names_to = "id", values_to = "reflectance")   
+          
+  ## Make figure
+      p_spec <- ggplot(data = pop_r2, mapping = aes(x = wavelength, y = reflectance, color = id)) +
+          #geom_smooth(se = FALSE, span = 0.05) + 
+          geom_line() + 
+          scale_color_viridis(discrete = TRUE) +
+          theme_bw() + 
+          theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                legend.title = element_text(size = 14)) +
+          guides(color = "none") +
+          xlab("Wavelength (nm)") +
+          ylab("Reflectance (%)")
+      
+  ## make dataframe of color metrics
+      color_met <- data.frame(id = unique(pop_r2$id),
+                              b_tot = rep(NA, n),
+                              b_uv = rep(NA, n),
+                              b_yel = rep(NA, n),
+                              sat_uv = rep(NA, n),
+                              sat_yel = rep(NA, n),
+                              ccar = rep(NA, n))
+      for(k in 1:nrow(color_met)){
+        color_met$b_tot[k] <- mean(subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] &
+                                            pop_r2$wavelength < 701 &
+                                            pop_r2$wavelength > 319))
+        color_met$b_uv[k] <- mean(subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] &
+                                            pop_r2$wavelength < 401 &
+                                            pop_r2$wavelength > 319))
+        color_met$b_yel[k] <- mean(subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] &
+                                            pop_r2$wavelength < 626 &
+                                            pop_r2$wavelength > 549))
+        color_met$sat_uv[k] <- sum(subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] &
+                                         pop_r2$wavelength < 401 & pop_r2$wavelength > 319)) / 
+                            sum(subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] &
+                                         pop_r2$wavelength < 701 & pop_r2$wavelength > 319))
+        color_met$sat_yel[k] <- sum(subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] &
+                                         pop_r2$wavelength < 626 & pop_r2$wavelength > 549)) / 
+                            sum(subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] &
+                                         pop_r2$wavelength < 701 & pop_r2$wavelength > 319))
+        color_met$ccar[k] <- (subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] & 
+                                       pop_r2$wavelength == 700) - 
+                              subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] & 
+                                       pop_r2$wavelength == 450)) /
+                              subset(pop_r2$reflectance, pop_r2$id == color_met$id[k] & 
+                                       pop_r2$wavelength == 700)
+      }
+      
+  ## Add little function for smoothed lines
+      my_fn <- function(data, mapping, method="loess", ...){
+      p <- ggplot(data = data, mapping = mapping) + 
+      geom_point() + 
+      geom_smooth(color = "coral3", fill = "coral3", alpha = 0.3, method=method, ...)
+      p
+    }
+      
+  ## Make a pairwise plot of relationships
+      p_cors <- GGally::ggpairs(color_met, columns = 2:7, lower = list(continuous = wrap(my_fn, method = "lm"))) +
+        theme_bw() +
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+      
+  ## Make correlation heatmap
+      cormat <- round(cor(color_met[, 2:7]), 2)
+      cormat[lower.tri(cormat)] <- NA
+      melted_cormat <- reshape2::melt(cormat, na.rm = TRUE)
+      for(i in 1:nrow(melted_cormat)){
+        if(melted_cormat$Var1[i] == melted_cormat$Var2[i]){melted_cormat$value[i] <- NA}
+      }
+      melted_cormat <- subset(melted_cormat, is.na(melted_cormat$value) == FALSE)
+      p_cors2 <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value)) +
+        geom_tile(color = "white") +
+        scale_fill_gradient2(low = "orange", high = "slateblue", mid = "white", 
+                             midpoint = 0, limit = c(-1, 1), space = "Lab",
+                             name = "Person\nCorrelation") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 12, hjust = 1),
+              axis.text.y = element_text(size = 12), legend.position = "top") +
+        coord_fixed() +
+        xlab("") + ylab("")
+      
+  ## Calculate variance along the x axis
+      var_pop <- data.frame(var = rep(NA, nrow(pop_r)))
+      for(i in 1:nrow(var_pop)){
+        temp <- t(pop_r[i, 1:(ncol(pop_r) - 1)])
+        var_pop$var[i] <- var(temp)
+      }
+      var_pop$wl <- lo_pred$wavelength
+    var_plot <-  ggplot(var_pop, mapping = aes(x = wl, y = var)) +
+        geom_line(color = "coral3", lwd = 2) +
+        theme_bw() +
+        theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank(),
+              axis.text.y = element_text(size = 12), axis.text.x = element_text(size = 12),
+              axis.title = element_text(size = 12)) +
+        xlab("Wavelength") +
+        ylab("Population variance")
+      
+  ## Put the output together
+      sim_out <- list(
+        wide_specs <- pop_r,
+        long_specs <- pop_r2,
+        color_mets <- color_met,
+        spec_plot <- p_spec,
+        cor_plot <- p_cors,
+        cor_plot2 <- p_cors2,
+        var_plot <- var_plot,
+        var_df <- var_pop
+      )
+      
+      return(sim_out)
+
+}
+
+```
+
+# Using the simulation
+
+This is the easy part now that the function is written. We can compare the covariation patterns for a variety of different scenarios. Here I'm just changing the parameters in the functions and then showing the default plots that are produced by the function with everything else held the same. Note that because of the way the sources of variation are calculated sequentially and in some cases by multiplication, changing one parameter can still have some impact on other measures. 
+
+We could consider different mechanisms. For example, I'm sort of assuming here that a fixed amount of lutein works by absorbing a certain percentage of reflectance at each wavelength. An alternative would be that a fixed amount of luten absorbs a certain absolute amount of reflectance at each wavelength. I don't really know which is a better assumption, but in some cases that will lead to different patterns. Similarly, in some cases it might matter which order these sources are added in, but I've always added them in the same order 1-4 here. For example, adding total reflectance changes after lutein might result in a different pattern. I don't *think* that these choices will have a huge effect on the general conclusions, but something to think about.
+
+The simulation is also a drastic oversimplification of the physical properties of the feather structures (i.e., they are not included at all). Because pigments have to be integrated with the feather matrix, it is totally possible that adding more pigment will change other characteristics of the shape (e.g., reducing total brightness) even outside of the range of absorbance of the pure pigment.
+
+Finally, for the examples below I've just stuck with a single amount of variation added when an effect is 'on' (i.e., zero variation vs. about a 15% SD). Of course we could also do things like a small amount of variation in one source and large amount in another etc, at some point those would converge toward the single variation examples with the source providing the largest amount of variation having the biggest effect.
+
+All of these examples are using the 'after' curve, but that choice doesn't seem to make much difference.
+
+## 1. Shape 1: boosting peak reflectance
+
+```{r shape-only-covar, warning = FALSE, message = FALSE, fig.height = 6, fig.width = 7.2}
+
+shape1_sim <- carotenoid_sim(shape1_sd = 0.15)
+
+grid.arrange(grobs = list(shape1_sim[[4]], shape1_sim[[6]], shape1_sim[[7]]),
+             widths = c(1, 1),
+             layout_matrix = rbind(c(1, 1),
+                                   c(2, 3)))
+
+```
+
+## 2. Shape 2: boosting UV reflectance
+
+```{r uvshift-only-covar, warning = FALSE, message = FALSE, fig.height = 6, fig.width = 7.2}
+shape2_sim <- carotenoid_sim(shape2_sd = 0.15)
+
+grid.arrange(grobs = list(shape2_sim[[4]], shape2_sim[[6]], shape2_sim[[7]]),
+             widths = c(1, 1),
+             layout_matrix = rbind(c(1, 1),
+                                   c(2, 3)))
+```
+
+## 3. Total reflectance with no shape change
+
+A small difference here from the previous version is that I changed the order of the operations so that all of the white 'base' layer additions are covered first before the lutein subtraction is made. Previously I was shifting reflectance up and down after adding lutein. This approach is probably (?) a better approximation although we could discuss. The previous approach of just raising or lowering the entire curve without changing shape at all might be a better way to model measurement error...
+
+```{r reflect-only-covar, warning = FALSE, message = FALSE, fig.height = 6, fig.width = 7.2}
+totalb_sim <- carotenoid_sim(totalb_sd = 0.09)
+
+grid.arrange(grobs = list(totalb_sim[[4]], totalb_sim[[6]], totalb_sim[[7]]),
+             widths = c(1, 1),
+             layout_matrix = rbind(c(1, 1),
+                                   c(2, 3)))
+```
+
+## 4. Carotenoid deposition
+
+```{r lutein-only-covar, warning = FALSE, message = FALSE, fig.height = 6, fig.width = 7.2}
+car_sim <- carotenoid_sim(pigment_sd = 0.15)
+
+grid.arrange(grobs = list(car_sim[[4]], car_sim[[6]], car_sim[[7]]),
+             widths = c(1, 1),
+             layout_matrix = rbind(c(1, 1),
+                                   c(2, 3)))
+```
+
+## Combinations
+
+In the previous version I had a series of combinations of variation in 1/2/3/4 mechanisms all together. I can easily add those back in, but I think they were hard to gather much info from and I've taken them out for now.
+
+## Correlations
+
+We discussed that one way we could recover some different patterns is if carotenoid deposition is correlated with feather structure/quality. The revised simulation can handle this. Any combination of covariance between the 3 or 4 mechanisms can be simulated, but I'm just starting simple here.
+
+## 5. Total brightness covaries with carotenoids
+
+Here I'm including a strong covariance between total underlying feather brightness and the amount of carotenoids deposited.
+
+```{r totalb-carotenoid, warning = FALSE, message = FALSE, fig.height = 6, fig.width = 7.2}
+tb_car_sim <- carotenoid_sim(totalb_sd = 0.09, pigment_sd = 0.15, totalb_pigment_cor = 0.7)
+
+
+grid.arrange(grobs = list(tb_car_sim[[4]], tb_car_sim[[6]], tb_car_sim[[7]]),
+             widths = c(1, 1),
+             layout_matrix = rbind(c(1, 1),
+                                   c(2, 3)))
+
+```
+
+## 6. Measurement error
+
+No variation at all in any of above mechanisms, only measurement error that raises or lowers the entire spectra without changing shape.
+
+```{r meas-error, warning = FALSE, message = FALSE, fig.height = 6, fig.width = 7.2}
+error_sim <- carotenoid_sim(measure_error = 0.05)
+
+grid.arrange(grobs = list(error_sim[[4]], error_sim[[6]], error_sim[[7]]),
+             widths = c(1, 1),
+             layout_matrix = rbind(c(1, 1),
+                                   c(2, 3)))
+```
+
+# Comparing variance patterns
+
+I'm pulling out the lines for population variance from the five simulations above for comparison. This is just a single comparison of 50 simulated individuals in each population. I could of course do more simulations or run in different ways, but thought it would be useful to see them together and to compare the correlation heatmaps side by side.
+
+```{r var-comparison, message = FALSE, warning = FALSE, fig.height = 4.8, fig.width = 7.2}
+
+var_comp <- data.frame(var = c(shape1_sim[[8]]$var, shape2_sim[[8]]$var, car_sim[[8]]$var, 
+                               totalb_sim[[8]]$var, tb_car_sim[[8]]$var, error_sim[[8]]$var),
+                       comp = rep(c("Shape1", "Shape2", "Carotenoid", "TotalB", "Tb_Car_Cor", "Error"), each = nrow(shape1_sim[[8]])),
+                      wl = rep(shape1_sim[[8]]$wl, 6))
+
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(var_comp, mapping = aes(x = wl, y = var, color = comp)) +
+  geom_line(lwd = 1.2) +
+  theme_bw() +
+  scale_color_manual(values = cbPalette) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank(),
+        axis.title = element_text(size = 12)) +
+  ylab("Population variance") + xlab("Wavelength")
+
+```
+
+
+Comparison of correlation heatmaps from each simulation above
+
+```{r comp-hmaps, message = FALSE, warning = FALSE, fig.height = 5.6, fig.width = 6.7}
+ggpubr::ggarrange(shape1_sim[[6]] + ggtitle("Shape1"), 
+                  shape2_sim[[6]] + ggtitle("Shape2"), 
+                  car_sim[[6]] + ggtitle("Carotenoid"), 
+                  totalb_sim[[6]] + ggtitle("Total B"), 
+                  tb_car_sim[[6]] + ggtitle("Tb ~ Carot"), 
+                  error_sim[[6]] + ggtitle("Error"),
+                  nrow = 2, ncol = 3,
+                  common.legend = TRUE)
+```
+
+
+
+# Table comparing correlations
+
+*removed this for now since it is sort of replaced above*
+
+
+
+```{r comp-table, warning = FALSE, message = FALSE}
+
+# I'm just compiling the rough output of all the combinations in the previous section into a table for comparison. 
+# 
+# - A = Variation in structural shape  
+# - B = Variation in UV shift  
+# - C = Variation in Lutein deposition  
+# - D = Variation in overall reflectance  
+# 
+# Note that I just added these by hand because I was having a hard timing comparing all the differences flipping back and forth so there could well be errors here. I don't have a strict guideline for what I called ++/w+/0/w-/--; I was just eyeballing the plots. It's also a randomization so the results will be slightly different each time. I've only run with 25 individuals.
+
+
+# comps <- as.data.frame(matrix(nrow = 15, ncol = 14))
+# colnames(comps) <- c("A", "B", "C", "D", "A_B", "A_C", "A_D", "B_C", "B_D", "C_D", "A_B_C", "A_B_D", "B_C_D", "A_B_C_D")
+# rownames(comps) <- c("bt_v_buv", "bt_v_by", "bt_v_suv", "bt_v_sy", "bt_v_ccar", 
+#                      "buv_v_by", "buv_v_suv", "buv_v_sy", "buv_v_ccar",
+#                      "by_v_suv", "by_v_sy", "by_v_ccar",
+#                      "suv_v_sy", "suv_v_ccar",
+#                      "sy_v_ccar")
+# comps[, "A"] <- c("++", "++", "--", "++", "++", "++", "--", "++", "++", "--", "++", "++", "--", "--", "++")
+# comps[, "B"] <- c("++", "++", "++", "--", "--", "++", "++", "--", "--", "++", "--", "--", "--", "--", "++")
+# comps[, "C"] <- c("++", "++", "--", "--", "--", "++", "--", "--", "--", "--", "--", "--", "++", "++", "++")
+# comps[, "D"] <- c("++", "++", "++", "--", "--", "++", "++", "--", "--", "++", "--", "--", "--", "--", "++")
+# comps[, "A_B"] <- c("++", "++", "w+", "w-", "w-", "++", "++", "--", "--", "w+", "w-", "w-", "--", "--", "++")
+# comps[, "A_C"] <- c("++", "++", "0", "0", "0", "++", "0", "0", "0", "0", "0", "0", "++", "++", "++")
+# comps[, "A_D"] <- c("++", "++", "++", "--", "--", "++", "++", "--", "--", "++", "--", "--", "--", "--", "++")
+# comps[, "B_C"] <- c("++", "++", "++", "--", "w-", "++", "++", "--", "0", "++", "--", "0", "w-", "0", "w+")
+# comps[, "B_D"] <- c("++", "++", "++", "--", "--", "++", "++", "--", "--", "++", "--", "--", "--", "w-", "w+")
+# comps[, "C_D"] <- c("++", "++", "++", "--", "--", "++", "++", "--", "--", "++", "--", "--", "--", "w-", "++")
+# comps[, "A_B_C"] <- c("++", "++", "w+", "w-", "w-", "w+", "++", "--", "w-", "0", "0", "0", "--", "0", "++")
+# comps[, "B_C_D"] <- c("++", "++", "++", "--", "--", "++", "++", "--", "--", "w+", "--", "--", "--", "--", "++")
+# comps[, "A_B_D"] <- c("++", "++", "w+", "--", "--", "++", "++", "--", "--", "w+", "--", "--", "--", "w-", "++")
+# comps[, "A_B_C_D"] <- c("++", "++", "w+", "--", "--", "++", "++", "--", "w-", "w+", "w-", "w-", "--", "w-", "++")
+# 
+# comps %>%
+#   kbl() %>%
+#   kable_styling()
+
 ```
 
